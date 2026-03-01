@@ -8,48 +8,40 @@ from community_boundaries import community_boundaries
 st.set_page_config(page_title="Chicago Crashes Dashboard", layout="wide")
 
 BASE_DIR = Path(__file__).resolve().parent  
-DATA_DIR = BASE_DIR.parent / "data" / "raw-data" 
-CRASH_PATH = DATA_DIR / "Traffic_Crashes_-_Crashes_20260224.csv"
+RAW_DIR = BASE_DIR.parent / "data" / "raw-data"
+DERIVED_DIR = BASE_DIR.parent / "data" / "derived-data"
+DERIVED_PATH = DERIVED_DIR / "crashes_by_community_year_hour_type.csv"
 
 @st.cache_data(show_spinner=False)
 def get_boundaries():
     return community_boundaries()
 
 @st.cache_data(show_spinner=False)
-def load_crashes(crash_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(crash_path, low_memory=False)
-
-    df["CRASH_DATE"] = pd.to_datetime(df["CRASH_DATE"], errors="coerce")
-
-    # Keep only rows with coordinates + date
-    df = df.dropna(subset=["CRASH_DATE", "LATITUDE", "LONGITUDE"]).copy()
-
-    # Derived time fields
-    df["crash_year"] = df["CRASH_DATE"].dt.year
-    df["crash_hour"] = df["CRASH_DATE"].dt.hour
-
-    # Crash type cleanup
+def load_derived(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
+    df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
     df["FIRST_CRASH_TYPE"] = df["FIRST_CRASH_TYPE"].astype(str).str.strip().fillna("UNKNOWN")
-
+    df["crash_count"] = pd.to_numeric(df["crash_count"], errors="coerce").fillna(0).astype(int)
     return df
 
 # -------------------------
 # Load data
 # -------------------------
 boundaries_gdf = get_boundaries()
-crashes = load_crashes(CRASH_PATH)
+derived = load_derived(DERIVED_PATH)
 
 # -------------------------
 # Sidebar filters
 # -------------------------
 st.sidebar.header("Filters")
 
-years = sorted(crashes["crash_year"].dropna().unique().tolist())
+years = sorted(derived["year"].dropna().unique().tolist())
 year_selected = st.sidebar.selectbox("Year", options=years, index=len(years) - 1)
 
 hour_selected = st.sidebar.slider("Hour of day (0–23)", min_value=0, max_value=23, value=0, step=1)
 
-all_types = sorted(crashes["FIRST_CRASH_TYPE"].dropna().unique().tolist())
+all_types = sorted(derived["FIRST_CRASH_TYPE"].dropna().unique().tolist())
 types_selected = st.sidebar.multiselect(
     "Crash types (FIRST_CRASH_TYPE)",
     options=all_types,
@@ -59,29 +51,16 @@ types_selected = st.sidebar.multiselect(
 # -------------------------
 # Filter crashes
 # -------------------------
-cr_filt = crashes[
-    (crashes["crash_year"] == year_selected) &
-    (crashes["crash_hour"] == hour_selected) &
-    (crashes["FIRST_CRASH_TYPE"].isin(types_selected))
+df_filt = derived[
+    (derived["year"] == year_selected) &
+    (derived["hour"] == hour_selected) &
+    (derived["FIRST_CRASH_TYPE"].isin(types_selected))
 ].copy()
 
-# -------------------------
-# Aggregate to COMMUNITY
-# -------------------------
-cr_gdf = gpd.GeoDataFrame(
-    cr_filt,
-    geometry=gpd.points_from_xy(cr_filt["LONGITUDE"], cr_filt["LATITUDE"]),
-    crs="EPSG:4326"
-)
-
-areas_small = boundaries_gdf[["COMMUNITY", "geometry"]]
-
-joined = gpd.sjoin(cr_gdf, areas_small, how="inner", predicate="within")
 
 crash_ct = (
-    joined.groupby("COMMUNITY")
-    .size()
-    .rename("crash_count")
+    df_filt.groupby("COMMUNITY")["crash_count"]
+    .sum()
     .reset_index()
 )
 
