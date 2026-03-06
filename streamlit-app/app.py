@@ -1,8 +1,11 @@
 import pandas as pd
-import matplotlib.pyplot as plt
+from matplotlib import cm, colors
 import geopandas as gpd
 import streamlit as st
 from pathlib import Path
+import pydeck as pdk
+import json
+import numpy as np
 from community_boundaries import community_boundaries
 
 st.set_page_config(page_title="Chicago Crashes Dashboard", layout="wide")
@@ -24,7 +27,10 @@ def load_derived(path: Path) -> pd.DataFrame:
     df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
     df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
     df["FIRST_CRASH_TYPE"] = df["FIRST_CRASH_TYPE"].astype(str).str.strip().fillna("UNKNOWN")
+
     df["crash_count"] = pd.to_numeric(df["crash_count"], errors="coerce").fillna(0).astype(int)
+    df["fatal_crashes"] = pd.to_numeric(df["fatal_crashes"], errors="coerce").fillna(0).astype(int)
+
     return df
 
 @st.cache_data(show_spinner=False)
@@ -98,13 +104,21 @@ df_filt = derived[
 
 
 crash_ct = (
-    df_filt.groupby("COMMUNITY")["crash_count"]
+    df_filt.groupby("COMMUNITY")[["crash_count", "fatal_crashes"]]
     .sum()
     .reset_index()
 )
 
 areas_plot = boundaries_gdf.merge(crash_ct, on="COMMUNITY", how="left")
 areas_plot["crash_count"] = areas_plot["crash_count"].fillna(0).astype(int)
+areas_plot["fatal_crashes"] = areas_plot["fatal_crashes"].fillna(0).astype(int)
+
+areas_plot["fatal_rate"] = np.where(
+    areas_plot["crash_count"] > 0,
+    areas_plot["fatal_crashes"] / areas_plot["crash_count"],
+    np.nan
+)
+areas_plot["fatal_rate_pct"] = (areas_plot["fatal_rate"] * 100).round(2)
 
 # -------------------------
 # Page
@@ -130,51 +144,150 @@ if show_red:
     red_df = load_redlight_cameras(REDLIGHT_CAM_PATH)
     red_df = red_df[red_df["go_live_year"] < year_selected].copy()
 
-fig, ax = plt.subplots(figsize=(9, 9))
-areas_plot.plot(
-    column="crash_count",
-    cmap="OrRd",
-    legend=True,
-    ax=ax,
-    edgecolor="white",
-    linewidth=0.3
-)
-ax.set_axis_off()
-ax.set_title(f"Crash Count by Community Area ({year_selected}, hour={hour_selected:02d})")
+# -------------------------
+# Camera counts per COMMUNITY (for tooltip)
+# -------------------------
+areas_plot["speed_cam_count"] = 0
+areas_plot["red_cam_count"] = 0
 
-handles, labels = [], []
+# Speed cameras -> count per community
+if show_speed and speed_df is not None and len(speed_df) > 0:
+    sp_gdf = gpd.GeoDataFrame(
+        speed_df,
+        geometry=gpd.points_from_xy(speed_df["LONGITUDE"], speed_df["LATITUDE"]),
+        crs="EPSG:4326",
+    )
+    sp_join = gpd.sjoin(
+        sp_gdf,
+        boundaries_gdf[["COMMUNITY", "geometry"]],
+        how="inner",
+        predicate="within",
+    )
+    if len(sp_join) > 0:
+        sp_ct = sp_join.groupby("COMMUNITY").size()
+        # 用 map 回填（不会出现 _x/_y）
+        areas_plot["speed_cam_count"] = (
+            areas_plot["COMMUNITY"].map(sp_ct).fillna(0).astype(int)
+        )
+
+# Red light cameras -> count per community
+if show_red and red_df is not None and len(red_df) > 0:
+    rl_gdf = gpd.GeoDataFrame(
+        red_df,
+        geometry=gpd.points_from_xy(red_df["LONGITUDE"], red_df["LATITUDE"]),
+        crs="EPSG:4326",
+    )
+    rl_join = gpd.sjoin(
+        rl_gdf,
+        boundaries_gdf[["COMMUNITY", "geometry"]],
+        how="inner",
+        predicate="within",
+    )
+    if len(rl_join) > 0:
+        rl_ct = rl_join.groupby("COMMUNITY").size()
+        areas_plot["red_cam_count"] = (
+            areas_plot["COMMUNITY"].map(rl_ct).fillna(0).astype(int)
+        )
+
+areas_plot["camera_total"] = areas_plot["speed_cam_count"] + areas_plot["red_cam_count"]
+areas_plot["crash_per_camera"] = np.where(
+    areas_plot["camera_total"] > 0,
+    (areas_plot["crash_count"] / areas_plot["camera_total"]).round(1),
+    np.nan,
+)
+
+# -------------------------
+# Interactive map (pydeck) + table (same layout)
+# -------------------------
+
+COLOR_SCHEME = "OrRd"
+
+vals = areas_plot["crash_count"].fillna(0).astype(float).values
+vmax = vals.max() if len(vals) else 0.0
+
+if vmax <= 0:
+    areas_plot["fill"] = [[220, 220, 220, 140]] * len(areas_plot)
+else:
+    norm = colors.Normalize(vmin=0, vmax=vmax)
+    cmap = cm.get_cmap(COLOR_SCHEME)
+
+    fills = []
+    for v in vals:
+        r, g, b, a = cmap(norm(v))  # 0-1 float
+        fills.append([int(255*r), int(255*g), int(255*b), 160])  # alpha 160
+    areas_plot["fill"] = fills
+
+geojson = json.loads(areas_plot.to_json())
+
+community_layer = pdk.Layer(
+    "GeoJsonLayer",
+    data=geojson,
+    pickable=True,
+    stroked=True,
+    filled=True,
+    get_fill_color="properties.fill",
+    get_line_color=[255, 255, 255],
+    line_width_min_pixels=1,
+)
+
+layers = [community_layer]
 
 if show_speed and speed_df is not None and len(speed_df) > 0:
-    h1 = ax.scatter(
-        speed_df["LONGITUDE"],
-        speed_df["LATITUDE"],
-        s=8,
-        marker="o",
-        c="blue",
-        alpha=0.7
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=speed_df,
+            get_position="[LONGITUDE, LATITUDE]",
+            get_radius=40,
+            radius_min_pixels=2,
+            radius_max_pixels=6,
+            get_fill_color=[0, 90, 255, 180],  # blue
+            pickable=False,
+        )
     )
-    handles.append(h1)
-    labels.append("Speed cameras")
 
 if show_red and red_df is not None and len(red_df) > 0:
-    h2 = ax.scatter(
-        red_df["LONGITUDE"],
-        red_df["LATITUDE"],
-        s=8,
-        marker="o",
-        c="green",
-        alpha=0.7
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=red_df,
+            get_position="[LONGITUDE, LATITUDE]",
+            get_radius=40,
+            radius_min_pixels=2,
+            radius_max_pixels=6,
+            get_fill_color=[0, 160, 0, 180],   # green
+            pickable=False,
+        )
     )
-    handles.append(h2)
-    labels.append("Red light cameras")
 
-if handles:
-    ax.legend(handles, labels, loc="lower left", frameon=True)
+tooltip = {
+    "html": f"""
+    <b>Community:</b> {{COMMUNITY}}<br/>
+    <b>Total crashes:</b> {{crash_count}}<br/>
+    <b>Fatal crashes:</b> {{fatal_crashes}}<br/>
+    <b>Fatal rate:</b> {{fatal_rate_pct}}%<br/>
+    <b>Speed cameras:</b> {{speed_cam_count}}<br/>
+    <b>Red light cameras:</b> {{red_cam_count}}<br/>
+    <b>Crashes per camera:</b> {{crash_per_camera}}
+    """,
+    "style": {"backgroundColor": "white", "color": "black"},
+}
+
+center = boundaries_gdf.geometry.unary_union.centroid
+view_state = pdk.ViewState(latitude=center.y, longitude=center.x, zoom=10.3)
+
+deck = pdk.Deck(
+    layers=layers,
+    initial_view_state=view_state,
+    tooltip=tooltip,
+    map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+)
 
 left, right = st.columns([2, 1])
 
 with left:
-    st.pyplot(fig, use_container_width=True)
+    st.subheader(f"Crash Count by Community ({year_selected}, hour={hour_selected:02d})")
+    st.pydeck_chart(deck, use_container_width=True)
 
 with right:
     st.subheader("Top communities")
