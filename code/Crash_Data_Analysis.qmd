@@ -1,0 +1,649 @@
+
+```{python}
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+from shapely import wkt
+import altair as alt
+import json
+
+alt.data_transformers.disable_max_rows()
+
+CRASH_FP = r"C:\Users\maosi\final-project-luchen-xinyi-sirui\data\raw-data\Traffic_Crashes.csv"
+COMM_FP  = r"C:\Users\maosi\final-project-luchen-xinyi-sirui\data\raw-data\Boundaries_-_Community_Areas_20260122.csv"
+RED_FP   = r"C:\Users\maosi\final-project-luchen-xinyi-sirui\data\raw-data\Red_Light_Camera_Locations_20260122.csv"
+SPEED_FP = r"C:\Users\maosi\final-project-luchen-xinyi-sirui\data\raw-data\Speed_Camera_Locations_20260222.csv"
+
+crash = pd.read_csv(CRASH_FP)
+comm  = pd.read_csv(COMM_FP)
+redlight = pd.read_csv(RED_FP)
+speed = pd.read_csv(SPEED_FP)
+
+crash["CRASH_DATE"] = pd.to_datetime(crash["CRASH_DATE"], errors="coerce")
+crash["YEAR"] = crash["CRASH_DATE"].dt.year
+crash["MONTH"] = crash["CRASH_DATE"].dt.month
+```
+
+1.Data Completeness: Month Covered per Year
+```{python}
+months_per_year = (
+    crash.dropna(subset=["YEAR", "MONTH"])
+         .groupby(["YEAR", "MONTH"])
+         .size()
+         .reset_index(name="n")        
+         .groupby("YEAR")["MONTH"]
+         .nunique()
+         .reset_index(name="months_covered")
+         .sort_values("YEAR")
+)
+
+months_per_year
+```
+```{python}
+months_chart = alt.Chart(months_per_year).mark_bar(color="#9ecae1").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y(
+        "months_covered:Q",
+        title="Number of Months with Data",
+        scale=alt.Scale(domain=[0, 12])
+    ),
+    tooltip=[
+        alt.Tooltip("YEAR:O", title="Year"),
+        alt.Tooltip("months_covered:Q", title="Months covered")
+    ]
+).properties(
+    title="Data Completeness: Months Covered per Year",
+    width=750,
+    height=400
+)
+
+months_chart
+```
+
+2.Annual Number of Crashed
+```{python}
+annual_crashes = (
+    crash.dropna(subset=["YEAR"])
+         .groupby("YEAR")
+         .size()
+         .reset_index(name="crash_count")
+         .sort_values("YEAR")
+)
+
+annual_crashes
+```
+
+```{python}
+
+annual_chart = alt.Chart(annual_crashes).mark_bar(color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("crash_count:Q", title="Annual Number of Crashes"),
+    tooltip=[
+        alt.Tooltip("YEAR:O", title="Year"),
+        alt.Tooltip("crash_count:Q", title="Crashes")
+    ]
+).properties(
+    title="Annual Number of Crashes",
+    width=750,
+    height=400
+)
+
+annual_chart
+```
+
+3.Average Crashed By Month (2018-2025)
+```{python}
+season_df = (
+    crash.dropna(subset=["YEAR", "MONTH"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR", "MONTH"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+monthly_avg = (
+    season_df.groupby("MONTH")["crash_count"]
+             .mean()
+             .reset_index(name="avg_monthly_crashes")
+             .sort_values("MONTH")
+)
+
+monthly_avg
+```
+```{python}
+season_chart = alt.Chart(monthly_avg).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X(
+        "MONTH:O",
+        title="Month",
+        sort=list(range(1,13)),
+        axis=alt.Axis(labelAngle=0)
+    ),
+    y=alt.Y("avg_monthly_crashes:Q", title="Average Monthly Crashes"),
+    tooltip=[
+        alt.Tooltip("MONTH:O", title="Month"),
+        alt.Tooltip("avg_monthly_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+).properties(
+    title="Seasonality: Average Crashes by Month (2018–2025)",
+    width=750,
+    height=400
+)
+
+season_chart
+```
+
+4.Average Crashes by Hour of Day (2018-2025)
+```{python}
+hour_df = (
+    crash.dropna(subset=["YEAR","CRASH_HOUR"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR","CRASH_HOUR"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+hour_avg = (
+    hour_df.groupby("CRASH_HOUR")["crash_count"]
+           .mean()
+           .reset_index(name="avg_crashes")
+           .sort_values("CRASH_HOUR")
+)
+
+hour_avg
+```
+```{python}
+overall_avg = hour_avg["avg_crashes"].mean()
+overall_avg
+bars = alt.Chart(hour_avg).mark_bar(color="#43a2ca").encode(
+    x=alt.X("CRASH_HOUR:O",
+            title="Hour of Day (0–23)",
+            axis=alt.Axis(labelAngle=0)),
+    y=alt.Y("avg_crashes:Q",
+            title="Average Crashes"),
+    tooltip=[
+        alt.Tooltip("CRASH_HOUR:O", title="Hour"),
+        alt.Tooltip("avg_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+)
+
+line = alt.Chart(pd.DataFrame({"y":[overall_avg]})).mark_rule(
+    strokeDash=[6,6],
+    color="black"
+).encode(y="y:Q")
+
+hour_chart = (bars + line).properties(
+    title="Average Crashes by Hour of Day (2018–2025)",
+    width=750,
+    height=400
+)
+
+hour_chart
+```
+
+5.Crashes Heatmap: Hour × Day of Week (Average, 2018–2025)
+```{python}
+heat_df = (
+    crash.dropna(subset=["YEAR","CRASH_HOUR","CRASH_DAY_OF_WEEK"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR","CRASH_DAY_OF_WEEK","CRASH_HOUR"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+heat_avg = (
+    heat_df.groupby(["CRASH_DAY_OF_WEEK","CRASH_HOUR"])["crash_count"]
+           .mean()
+           .reset_index(name="avg_crashes")
+)
+
+heat_avg
+```
+```{python}
+weekday_map = {
+1:"Sunday",
+2:"Monday",
+3:"Tuesday",
+4:"Wednesday",
+5:"Thursday",
+6:"Friday",
+7:"Saturday"
+}
+
+heat_avg["weekday"] = heat_avg["CRASH_DAY_OF_WEEK"].map(weekday_map)
+
+heat_chart = alt.Chart(heat_avg).mark_rect().encode(
+    x=alt.X("CRASH_HOUR:O",
+            title="Hour of Day (0–23)"),
+    
+    y=alt.Y("weekday:O",
+            title="Day of Week",
+            sort=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]),
+    
+    color=alt.Color(
+        "avg_crashes:Q",
+        title="Avg Crashes",
+        scale=alt.Scale(
+            range=["#e0f3db","#a8ddb5","#43a2ca"]
+        )
+    ),
+    
+    tooltip=[
+        alt.Tooltip("weekday:N", title="Day"),
+        alt.Tooltip("CRASH_HOUR:O", title="Hour"),
+        alt.Tooltip("avg_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+).properties(
+    title="Crashes Heatmap: Hour × Day of Week (Average, 2018–2025)",
+    width=750,
+    height=350
+)
+
+heat_chart
+```
+
+6.Crash Severity Distribution
+```{python}
+severity_df = (
+    crash.dropna(subset=["YEAR","MOST_SEVERE_INJURY"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+)
+
+severity_share = (
+    severity_df["MOST_SEVERE_INJURY"]
+    .value_counts(normalize=True)
+    .mul(100)
+    .reset_index()
+)
+
+severity_share.columns = ["severity","share"]
+severity_share
+```
+```{python}
+order = [
+"NO INDICATION OF INJURY",
+"REPORTED, NOT EVIDENT",
+"NONINCAPACITATING INJURY",
+"INCAPACITATING INJURY",
+"FATAL"
+]
+
+severity_share["severity"] = pd.Categorical(
+    severity_share["severity"],
+    categories=order,
+    ordered=True
+)
+
+severity_share = severity_share.sort_values("severity")
+
+severity_chart = alt.Chart(severity_share).mark_bar(
+    color="#43a2ca"
+).encode(
+    y=alt.Y(
+        "severity:N",
+        sort=order,
+        title="Most Severe Injury"
+    ),
+    
+    x=alt.X(
+        "share:Q",
+        title="Share of Crashes (%)"
+    ),
+    
+    tooltip=[
+        alt.Tooltip("severity:N", title="Severity"),
+        alt.Tooltip("share:Q", title="Share (%)", format=".1f")
+    ]
+).properties(
+    title="Crash Severity Distribution (2018–2025)",
+    width=750,
+    height=350
+)
+
+severity_chart
+text = severity_chart.mark_text(
+    align="left",
+    baseline="middle",
+    dx=5
+).encode(
+    text=alt.Text("share:Q", format=".1f")
+)
+
+severity_chart + text
+```
+
+7.Top Roadway Surface Conditions in Crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "ROADWAY_SURFACE_COND"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+surf = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+surf.columns = ["surface", "n"]
+surf["share_pct"] = surf["n"] / surf["n"].sum() * 100
+surf
+```
+```{python}
+base = alt.Chart(surf).mark_bar(color="#43a2ca").encode(
+    y=alt.Y("surface:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["surface", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Top Roadway Surface Conditions in Crashes", width=750, height=360)
+base 
+```
+
+8.Lightning Conditions in Crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "LIGHTING_CONDITION"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+light = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+light.columns = ["lighting", "n"]
+light["share_pct"] = light["n"] / light["n"].sum() * 100
+light
+```
+```{python}
+base = alt.Chart(light).mark_bar(color="#a8ddb5").encode(
+    y=alt.Y("lighting:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["lighting", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Lighting", width=750, height=320)
+
+base 
+```
+
+9.Primary contributory causes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "PRIM_CONTRIBUTORY_CAUSE"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+cause = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+cause.columns = ["cause", "n"]
+cause["share_pct"] = cause["n"] / cause["n"].sum() * 100
+cause
+```
+```{python}
+base = alt.Chart(cause).mark_bar(color="#43a2ca").encode(
+    y=alt.Y("cause:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["cause", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Primary Cause", width=750, height=420)
+base
+```
+
+10.eatmap of total injuries（Year × Month）
+```{python}
+inj = (
+    crash.query("YEAR >= 2018 and YEAR <= 2025")
+         .dropna(subset=["YEAR","MONTH"])
+         .groupby(["YEAR","MONTH"])["INJURIES_TOTAL"]
+         .sum()
+         .reset_index(name="total_injuries")
+)
+
+inj.head()
+```
+```{python}
+inj_heat = alt.Chart(inj).mark_rect().encode(
+    x=alt.X("MONTH:O", title="Month", sort=list(range(1,13)), axis=alt.Axis(labelAngle=0)),
+    y=alt.Y("YEAR:O", title="Year", sort="ascending"),
+    color=alt.Color(
+        "total_injuries:Q",
+        title="Injuries",
+        scale=alt.Scale(range=["#e0f3db", "#a8ddb5", "#43a2ca"])
+    ),
+    tooltip=["YEAR:O","MONTH:O", alt.Tooltip("total_injuries:Q", format=",.0f")]
+).properties(title="Injuries Heatmap", width=750, height=320)
+
+inj_heat
+```
+
+11.Total injuries over time
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+df = df.dropna(subset=["CRASH_DATE"])
+
+df["year_month"] = df["CRASH_DATE"].dt.to_period("M").dt.to_timestamp()
+
+inj_month = (
+    df.groupby("year_month")["INJURIES_TOTAL"]
+      .sum()
+      .reset_index(name="total_injuries")
+      .sort_values("year_month")
+)
+
+inj_line = alt.Chart(inj_month).mark_line(color="#43a2ca").encode(
+    x=alt.X("year_month:T", title="Month"),
+    y=alt.Y("total_injuries:Q", title="Total injuries"),
+    tooltip=[alt.Tooltip("year_month:T", title="Month"),
+             alt.Tooltip("total_injuries:Q", format=",.0f")]
+).properties(title="Injuries Over Time", width=750, height=320)
+
+inj_line
+```
+
+12.Fatal rate by first crash type
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+tmp = (
+    df.dropna(subset=["FIRST_CRASH_TYPE"])
+      .groupby("FIRST_CRASH_TYPE")
+      .agg(
+          total=("FIRST_CRASH_TYPE","size"),
+          fatal=("fatal_flag","sum")
+      )
+      .reset_index()
+)
+
+tmp["fatal_rate"] = tmp["fatal"] / tmp["total"]
+
+min_total = 1000
+top_k = 15
+fatal_type = (
+    tmp.query("total >= @min_total")
+       .sort_values("fatal_rate", ascending=False)
+       .head(top_k)
+)
+
+fatal_bar = alt.Chart(fatal_type).mark_bar().encode(
+    x=alt.X("FIRST_CRASH_TYPE:N", sort="-y", title=None),
+    y=alt.Y("fatal_rate:Q", title="Fatal rate"),
+    color=alt.condition(
+        alt.datum.fatal_rate >= fatal_type["fatal_rate"].median(),
+        alt.value("#43a2ca"),
+        alt.value("#a8ddb5")
+    ),
+    tooltip=["FIRST_CRASH_TYPE",
+             alt.Tooltip("total:Q", format=",.0f"),
+             alt.Tooltip("fatal:Q", format=",.0f"),
+             alt.Tooltip("fatal_rate:Q", format=".4f")]
+).properties(title="Fatal Rate by Crash Type", width=750, height=320)
+
+fatal_bar
+```
+
+13.Annual fatal crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+year_fatal = (
+    df.groupby("YEAR")
+      .agg(
+          total_crashes=("fatal_flag", "size"),
+          fatal_crashes=("fatal_flag", "sum")
+      )
+      .reset_index()
+      .sort_values("YEAR")
+)
+
+year_fatal["fatal_share_pct"] = year_fatal["fatal_crashes"] / year_fatal["total_crashes"] * 100
+year_fatal
+```
+```{python}
+fatal_count_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("fatal_crashes:Q", title="Fatal crashes"),
+    tooltip=["YEAR", "fatal_crashes", alt.Tooltip("total_crashes:Q", format=",")]
+).properties(
+    title="Annual Fatal Crashes",
+    width=600,
+    height=360
+)
+
+fatal_count_chart
+```
+
+14.Annual fatal share
+```{python}
+fatal_share_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("fatal_share_pct:Q", title="Fatal share (%)"),
+    tooltip=["YEAR", alt.Tooltip("fatal_share_pct:Q", format=".3f"),
+             alt.Tooltip("fatal_crashes:Q", format=",.0f"),
+             alt.Tooltip("total_crashes:Q", format=",.0f")]
+).properties(
+    title="Fatal Share of Crashes",
+    width=600,
+    height=360
+)
+
+fatal_share_chart
+```
+
+15.Fatal Crash Rate by Posted Speed Limit
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["POSTED_SPEED_LIMIT"] = pd.to_numeric(df["POSTED_SPEED_LIMIT"], errors="coerce")
+df = df.dropna(subset=["POSTED_SPEED_LIMIT"])
+df = df[(df["POSTED_SPEED_LIMIT"] >= 0) & (df["POSTED_SPEED_LIMIT"] <= 70)]
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+bins = [0,20,25,30,35,40,45,50,55,60,65,70]
+labels = ["0-20","21-25","26-30","31-35","36-40","41-45","46-50","51-55","56-60","61-65","66-70"]
+
+df["speed_bin"] = pd.cut(df["POSTED_SPEED_LIMIT"], bins=bins, labels=labels, include_lowest=True, right=True)
+
+speed_stats = (
+    df.dropna(subset=["speed_bin"])
+      .groupby("speed_bin")
+      .agg(total=("fatal_flag","size"), fatal=("fatal_flag","sum"))
+      .reset_index()
+)
+
+speed_stats["fatal_rate"] = speed_stats["fatal"] / speed_stats["total"]
+
+low_bins  = {"0-20","21-25","26-30"}
+mid_bins  = {"31-35","51-55"}    
+high_bins = {"36-40","41-45","46-50"}
+
+def pick_color(b):
+    if b in low_bins:  return "#e0f3db"
+    if b in high_bins: return "#43a2ca"
+    return "#a8ddb5"
+
+speed_stats["bar_color"] = speed_stats["speed_bin"].astype(str).map(pick_color)
+
+bars = alt.Chart(speed_stats).mark_bar(
+    size=50   
+).encode(
+    x=alt.X(
+        "speed_bin:O",
+        title="Posted Speed Limit (mph)",
+        sort=labels,
+        axis=alt.Axis(labelAngle=0)
+    ),
+    
+    y=alt.Y(
+        "fatal_rate:Q",
+        title="Fatal Rate"
+    ),
+    
+    color=alt.Color("bar_color:N", scale=None, legend=None),
+    
+    tooltip=[
+        alt.Tooltip("speed_bin:N", title="Speed"),
+        alt.Tooltip("fatal_rate:Q", format=".4f"),
+        alt.Tooltip("total:Q", format=",")
+    ]
+)
+
+line = alt.Chart(speed_stats).mark_line(
+    color="#2c5c85",
+    point=True,
+    strokeWidth=1
+).encode(
+    x=alt.X("speed_bin:O", sort=labels),
+    y="fatal_rate:Q"
+)
+
+chart = (bars + line).properties(
+    title="Fatal Crash Rate by Posted Speed Limit",
+    width=800,
+    height=380
+).configure_view(
+    stroke="black",   
+    strokeWidth=1.5  
+)
+
+chart
+```
+
+16.Crash Density Map
+```{python}
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+
+colors = ["#e0f3db", "#a8ddb5", "#43a2ca"]
+cmap_gnbu = LinearSegmentedColormap.from_list("gnbu_custom", colors)
+
+m = crash.copy()
+m = m[(m["YEAR"] >= 2018) & (m["YEAR"] <= 2025)]
+m = m.dropna(subset=["LATITUDE", "LONGITUDE"])
+
+m = m[(m["LATITUDE"].between(41.6, 42.1)) &
+      (m["LONGITUDE"].between(-88.0, -87.3))]
+
+if len(m) > 200000:
+    m = m.sample(200000, random_state=0)
+
+plt.figure(figsize=(8, 8))
+
+hb = plt.hexbin(
+    m["LONGITUDE"],
+    m["LATITUDE"],
+    gridsize=120,  
+    mincnt=1,
+    cmap=cmap_gnbu
+)
+
+plt.colorbar(hb, label="Crash Density")
+plt.title("Crash Density Map")
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+plt.tight_layout()
+plt.show()
+```
+
