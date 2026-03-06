@@ -19,7 +19,7 @@ from community_boundaries import community_boundaries
 
 
 def load_crashes(crash_path: Path) -> pd.DataFrame:
-    usecols = ["CRASH_DATE", "LATITUDE", "LONGITUDE", "FIRST_CRASH_TYPE"]
+    usecols = ["CRASH_DATE", "LATITUDE", "LONGITUDE", "FIRST_CRASH_TYPE", "MOST_SEVERE_INJURY"]
     df = pd.read_csv(crash_path, usecols=usecols, low_memory=False)
 
     df["CRASH_DATE"] = pd.to_datetime(
@@ -34,6 +34,9 @@ def load_crashes(crash_path: Path) -> pd.DataFrame:
     df["FIRST_CRASH_TYPE"] = (
         df["FIRST_CRASH_TYPE"].astype(str).str.strip().fillna("UNKNOWN")
     )
+
+    df["MOST_SEVERE_INJURY"] = df["MOST_SEVERE_INJURY"].astype(str).str.strip()
+    df["fatal_flag"] = (df["MOST_SEVERE_INJURY"] == "FATAL").astype(int)
 
     df["year"] = df["CRASH_DATE"].dt.year
     df["hour"] = df["CRASH_DATE"].dt.hour
@@ -57,10 +60,12 @@ def main():
     joined = gpd.sjoin(cr_gdf, areas, how="inner", predicate="within")
 
     agg = (
-        joined.groupby(["COMMUNITY", "year", "hour", "FIRST_CRASH_TYPE"])
-        .size()
-        .rename("crash_count")
-        .reset_index()
+    joined.groupby(["COMMUNITY", "year", "hour", "FIRST_CRASH_TYPE"])
+    .agg(
+        crash_count=("fatal_flag", "size"),
+        fatal_crashes=("fatal_flag", "sum")
+    )
+    .reset_index()
     )
 
     agg.to_csv(OUT_PATH, index=False)
