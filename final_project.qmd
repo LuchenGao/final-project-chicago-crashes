@@ -1,0 +1,1246 @@
+---
+title: "Chicago cameras crashes"
+format:
+  html:
+    toc: true
+    code-fold: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+from shapely import wkt
+import altair as alt
+import matplotlib.pyplot as plt
+import json
+from pathlib import Path
+
+alt.data_transformers.disable_max_rows()
+
+REPO_ROOT = Path.cwd() 
+RAW_DIR = REPO_ROOT / "data" / "raw-data"
+DERIVED_DIR = REPO_ROOT / "data" / "derived-data"
+
+
+CRASH_FP = RAW_DIR / "Traffic_Crashes_-_Crashes_20260224.csv"
+COMM_FP  = RAW_DIR / "Boundaries_-_Community_Areas_20260122.csv"
+RED_FP   = RAW_DIR / "Red_Light_Camera_Locations_20260122.csv"
+SPEED_FP = RAW_DIR / "Speed_Camera_Locations_20260222.csv"
+
+crash = pd.read_csv(CRASH_FP)
+comm  = pd.read_csv(COMM_FP)
+redlight = pd.read_csv(RED_FP)
+speed = pd.read_csv(SPEED_FP)
+
+crash["CRASH_DATE"] = pd.to_datetime(crash["CRASH_DATE"], errors="coerce")
+crash["YEAR"] = crash["CRASH_DATE"].dt.year
+crash["MONTH"] = crash["CRASH_DATE"].dt.month
+```
+
+1.Data Completeness: Month Covered per Year
+```{python}
+months_per_year = (
+    crash.dropna(subset=["YEAR", "MONTH"])
+         .groupby(["YEAR", "MONTH"])
+         .size()
+         .reset_index(name="n")        
+         .groupby("YEAR")["MONTH"]
+         .nunique()
+         .reset_index(name="months_covered")
+         .sort_values("YEAR")
+)
+
+months_per_year
+```
+```{python}
+months_chart = alt.Chart(months_per_year).mark_bar(color="#9ecae1").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y(
+        "months_covered:Q",
+        title="Number of Months with Data",
+        scale=alt.Scale(domain=[0, 12])
+    ),
+    tooltip=[
+        alt.Tooltip("YEAR:O", title="Year"),
+        alt.Tooltip("months_covered:Q", title="Months covered")
+    ]
+).properties(
+    title="Data Completeness: Months Covered per Year",
+    width=750,
+    height=400
+)
+
+months_chart
+```
+
+2.Annual Number of Crashed
+```{python}
+annual_crashes = (
+    crash.dropna(subset=["YEAR"])
+         .groupby("YEAR")
+         .size()
+         .reset_index(name="crash_count")
+         .sort_values("YEAR")
+)
+
+annual_crashes
+```
+
+```{python}
+
+annual_chart = alt.Chart(annual_crashes).mark_bar(color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("crash_count:Q", title="Annual Number of Crashes"),
+    tooltip=[
+        alt.Tooltip("YEAR:O", title="Year"),
+        alt.Tooltip("crash_count:Q", title="Crashes")
+    ]
+).properties(
+    title="Annual Number of Crashes",
+    width=750,
+    height=400
+)
+
+annual_chart
+```
+
+3.Average Crashed By Month (2018-2025)
+```{python}
+season_df = (
+    crash.dropna(subset=["YEAR", "MONTH"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR", "MONTH"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+monthly_avg = (
+    season_df.groupby("MONTH")["crash_count"]
+             .mean()
+             .reset_index(name="avg_monthly_crashes")
+             .sort_values("MONTH")
+)
+
+monthly_avg
+```
+```{python}
+season_chart = alt.Chart(monthly_avg).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X(
+        "MONTH:O",
+        title="Month",
+        sort=list(range(1,13)),
+        axis=alt.Axis(labelAngle=0)
+    ),
+    y=alt.Y("avg_monthly_crashes:Q", title="Average Monthly Crashes"),
+    tooltip=[
+        alt.Tooltip("MONTH:O", title="Month"),
+        alt.Tooltip("avg_monthly_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+).properties(
+    title="Seasonality: Average Crashes by Month (2018–2025)",
+    width=750,
+    height=400
+)
+
+season_chart
+```
+
+4.Average Crashes by Hour of Day (2018-2025)
+```{python}
+hour_df = (
+    crash.dropna(subset=["YEAR","CRASH_HOUR"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR","CRASH_HOUR"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+hour_avg = (
+    hour_df.groupby("CRASH_HOUR")["crash_count"]
+           .mean()
+           .reset_index(name="avg_crashes")
+           .sort_values("CRASH_HOUR")
+)
+
+hour_avg
+```
+```{python}
+overall_avg = hour_avg["avg_crashes"].mean()
+overall_avg
+bars = alt.Chart(hour_avg).mark_bar(color="#43a2ca").encode(
+    x=alt.X("CRASH_HOUR:O",
+            title="Hour of Day (0–23)",
+            axis=alt.Axis(labelAngle=0)),
+    y=alt.Y("avg_crashes:Q",
+            title="Average Crashes"),
+    tooltip=[
+        alt.Tooltip("CRASH_HOUR:O", title="Hour"),
+        alt.Tooltip("avg_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+)
+
+line = alt.Chart(pd.DataFrame({"y":[overall_avg]})).mark_rule(
+    strokeDash=[6,6],
+    color="black"
+).encode(y="y:Q")
+
+hour_chart = (bars + line).properties(
+    title="Average Crashes by Hour of Day (2018–2025)",
+    width=750,
+    height=400
+)
+
+hour_chart
+```
+
+5.Crashes Heatmap: Hour × Day of Week (Average, 2018–2025)
+```{python}
+heat_df = (
+    crash.dropna(subset=["YEAR","CRASH_HOUR","CRASH_DAY_OF_WEEK"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+         .groupby(["YEAR","CRASH_DAY_OF_WEEK","CRASH_HOUR"])
+         .size()
+         .reset_index(name="crash_count")
+)
+
+heat_avg = (
+    heat_df.groupby(["CRASH_DAY_OF_WEEK","CRASH_HOUR"])["crash_count"]
+           .mean()
+           .reset_index(name="avg_crashes")
+)
+
+heat_avg
+```
+```{python}
+weekday_map = {
+1:"Sunday",
+2:"Monday",
+3:"Tuesday",
+4:"Wednesday",
+5:"Thursday",
+6:"Friday",
+7:"Saturday"
+}
+
+heat_avg["weekday"] = heat_avg["CRASH_DAY_OF_WEEK"].map(weekday_map)
+
+heat_chart = alt.Chart(heat_avg).mark_rect().encode(
+    x=alt.X("CRASH_HOUR:O",
+            title="Hour of Day (0–23)"),
+    
+    y=alt.Y("weekday:O",
+            title="Day of Week",
+            sort=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]),
+    
+    color=alt.Color(
+        "avg_crashes:Q",
+        title="Avg Crashes",
+        scale=alt.Scale(
+            range=["#e0f3db","#a8ddb5","#43a2ca"]
+        )
+    ),
+    
+    tooltip=[
+        alt.Tooltip("weekday:N", title="Day"),
+        alt.Tooltip("CRASH_HOUR:O", title="Hour"),
+        alt.Tooltip("avg_crashes:Q", title="Avg crashes", format=",.0f")
+    ]
+).properties(
+    title="Crashes Heatmap: Hour × Day of Week (Average, 2018–2025)",
+    width=750,
+    height=350
+)
+
+heat_chart
+```
+
+6.Crash Severity Distribution
+```{python}
+severity_df = (
+    crash.dropna(subset=["YEAR","MOST_SEVERE_INJURY"])
+         .query("YEAR >= 2018 and YEAR <= 2025")
+)
+
+severity_share = (
+    severity_df["MOST_SEVERE_INJURY"]
+    .value_counts(normalize=True)
+    .mul(100)
+    .reset_index()
+)
+
+severity_share.columns = ["severity","share"]
+severity_share
+```
+```{python}
+order = [
+"NO INDICATION OF INJURY",
+"REPORTED, NOT EVIDENT",
+"NONINCAPACITATING INJURY",
+"INCAPACITATING INJURY",
+"FATAL"
+]
+
+severity_share["severity"] = pd.Categorical(
+    severity_share["severity"],
+    categories=order,
+    ordered=True
+)
+
+severity_share = severity_share.sort_values("severity")
+
+severity_chart = alt.Chart(severity_share).mark_bar(
+    color="#43a2ca"
+).encode(
+    y=alt.Y(
+        "severity:N",
+        sort=order,
+        title="Most Severe Injury"
+    ),
+    
+    x=alt.X(
+        "share:Q",
+        title="Share of Crashes (%)"
+    ),
+    
+    tooltip=[
+        alt.Tooltip("severity:N", title="Severity"),
+        alt.Tooltip("share:Q", title="Share (%)", format=".1f")
+    ]
+).properties(
+    title="Crash Severity Distribution (2018–2025)",
+    width=750,
+    height=350
+)
+
+severity_chart
+text = severity_chart.mark_text(
+    align="left",
+    baseline="middle",
+    dx=5
+).encode(
+    text=alt.Text("share:Q", format=".1f")
+)
+
+severity_chart + text
+```
+
+7.Top Roadway Surface Conditions in Crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "ROADWAY_SURFACE_COND"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+surf = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+surf.columns = ["surface", "n"]
+surf["share_pct"] = surf["n"] / surf["n"].sum() * 100
+surf
+```
+```{python}
+base = alt.Chart(surf).mark_bar(color="#43a2ca").encode(
+    y=alt.Y("surface:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["surface", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Top Roadway Surface Conditions in Crashes", width=750, height=360)
+base 
+```
+
+8.Lightning Conditions in Crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "LIGHTING_CONDITION"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+light = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+light.columns = ["lighting", "n"]
+light["share_pct"] = light["n"] / light["n"].sum() * 100
+light
+```
+```{python}
+base = alt.Chart(light).mark_bar(color="#a8ddb5").encode(
+    y=alt.Y("lighting:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["lighting", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Lighting", width=750, height=320)
+
+base 
+```
+
+9.Primary contributory causes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+col = "PRIM_CONTRIBUTORY_CAUSE"
+
+top_n = 10
+counts = df[col].fillna("UNKNOWN").astype(str).value_counts()
+
+top = counts.head(top_n)
+other = counts.iloc[top_n:].sum()
+
+cause = pd.concat([top, pd.Series({"OTHER": other})]).reset_index()
+cause.columns = ["cause", "n"]
+cause["share_pct"] = cause["n"] / cause["n"].sum() * 100
+cause
+```
+```{python}
+base = alt.Chart(cause).mark_bar(color="#43a2ca").encode(
+    y=alt.Y("cause:N", sort="-x", title=None),
+    x=alt.X("n:Q", title="Crashes"),
+    tooltip=["cause", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
+).properties(title="Primary Cause", width=750, height=420)
+base
+```
+
+10.eatmap of total injuries（Year × Month）
+```{python}
+inj = (
+    crash.query("YEAR >= 2018 and YEAR <= 2025")
+         .dropna(subset=["YEAR","MONTH"])
+         .groupby(["YEAR","MONTH"])["INJURIES_TOTAL"]
+         .sum()
+         .reset_index(name="total_injuries")
+)
+
+inj.head()
+```
+```{python}
+inj_heat = alt.Chart(inj).mark_rect().encode(
+    x=alt.X("MONTH:O", title="Month", sort=list(range(1,13)), axis=alt.Axis(labelAngle=0)),
+    y=alt.Y("YEAR:O", title="Year", sort="ascending"),
+    color=alt.Color(
+        "total_injuries:Q",
+        title="Injuries",
+        scale=alt.Scale(range=["#e0f3db", "#a8ddb5", "#43a2ca"])
+    ),
+    tooltip=["YEAR:O","MONTH:O", alt.Tooltip("total_injuries:Q", format=",.0f")]
+).properties(title="Injuries Heatmap", width=750, height=320)
+
+inj_heat
+```
+
+11.Total injuries over time
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+df = df.dropna(subset=["CRASH_DATE"])
+
+df["year_month"] = df["CRASH_DATE"].dt.to_period("M").dt.to_timestamp()
+
+inj_month = (
+    df.groupby("year_month")["INJURIES_TOTAL"]
+      .sum()
+      .reset_index(name="total_injuries")
+      .sort_values("year_month")
+)
+
+inj_line = alt.Chart(inj_month).mark_line(color="#43a2ca").encode(
+    x=alt.X("year_month:T", title="Month"),
+    y=alt.Y("total_injuries:Q", title="Total injuries"),
+    tooltip=[alt.Tooltip("year_month:T", title="Month"),
+             alt.Tooltip("total_injuries:Q", format=",.0f")]
+).properties(title="Injuries Over Time", width=750, height=320)
+
+inj_line
+```
+
+12.Fatal rate by first crash type
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+tmp = (
+    df.dropna(subset=["FIRST_CRASH_TYPE"])
+      .groupby("FIRST_CRASH_TYPE")
+      .agg(
+          total=("FIRST_CRASH_TYPE","size"),
+          fatal=("fatal_flag","sum")
+      )
+      .reset_index()
+)
+
+tmp["fatal_rate"] = tmp["fatal"] / tmp["total"]
+
+min_total = 1000
+top_k = 15
+fatal_type = (
+    tmp.query("total >= @min_total")
+       .sort_values("fatal_rate", ascending=False)
+       .head(top_k)
+)
+
+fatal_bar = alt.Chart(fatal_type).mark_bar().encode(
+    x=alt.X("FIRST_CRASH_TYPE:N", sort="-y", title=None),
+    y=alt.Y("fatal_rate:Q", title="Fatal rate"),
+    color=alt.condition(
+        alt.datum.fatal_rate >= fatal_type["fatal_rate"].median(),
+        alt.value("#43a2ca"),
+        alt.value("#a8ddb5")
+    ),
+    tooltip=["FIRST_CRASH_TYPE",
+             alt.Tooltip("total:Q", format=",.0f"),
+             alt.Tooltip("fatal:Q", format=",.0f"),
+             alt.Tooltip("fatal_rate:Q", format=".4f")]
+).properties(title="Fatal Rate by Crash Type", width=750, height=320)
+
+fatal_bar
+```
+
+13.Annual fatal crashes
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+year_fatal = (
+    df.groupby("YEAR")
+      .agg(
+          total_crashes=("fatal_flag", "size"),
+          fatal_crashes=("fatal_flag", "sum")
+      )
+      .reset_index()
+      .sort_values("YEAR")
+)
+
+year_fatal["fatal_share_pct"] = year_fatal["fatal_crashes"] / year_fatal["total_crashes"] * 100
+year_fatal
+```
+```{python}
+fatal_count_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("fatal_crashes:Q", title="Fatal crashes"),
+    tooltip=["YEAR", "fatal_crashes", alt.Tooltip("total_crashes:Q", format=",")]
+).properties(
+    title="Annual Fatal Crashes",
+    width=600,
+    height=360
+)
+
+fatal_count_chart
+```
+
+14.Annual fatal share
+```{python}
+fatal_share_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca").encode(
+    x=alt.X("YEAR:O", title="Year"),
+    y=alt.Y("fatal_share_pct:Q", title="Fatal share (%)"),
+    tooltip=["YEAR", alt.Tooltip("fatal_share_pct:Q", format=".3f"),
+             alt.Tooltip("fatal_crashes:Q", format=",.0f"),
+             alt.Tooltip("total_crashes:Q", format=",.0f")]
+).properties(
+    title="Fatal Share of Crashes",
+    width=600,
+    height=360
+)
+
+fatal_share_chart
+```
+
+15.Fatal Crash Rate by Posted Speed Limit
+```{python}
+df = crash.query("YEAR >= 2018 and YEAR <= 2025").copy()
+
+df["POSTED_SPEED_LIMIT"] = pd.to_numeric(df["POSTED_SPEED_LIMIT"], errors="coerce")
+df = df.dropna(subset=["POSTED_SPEED_LIMIT"])
+df = df[(df["POSTED_SPEED_LIMIT"] >= 0) & (df["POSTED_SPEED_LIMIT"] <= 70)]
+
+df["fatal_flag"] = df["INJURIES_FATAL"].fillna(0).astype(float) > 0
+
+bins = [0,20,25,30,35,40,45,50,55,60,65,70]
+labels = ["0-20","21-25","26-30","31-35","36-40","41-45","46-50","51-55","56-60","61-65","66-70"]
+
+df["speed_bin"] = pd.cut(df["POSTED_SPEED_LIMIT"], bins=bins, labels=labels, include_lowest=True, right=True)
+
+speed_stats = (
+    df.dropna(subset=["speed_bin"])
+      .groupby("speed_bin")
+      .agg(total=("fatal_flag","size"), fatal=("fatal_flag","sum"))
+      .reset_index()
+)
+
+speed_stats["fatal_rate"] = speed_stats["fatal"] / speed_stats["total"]
+
+low_bins  = {"0-20","21-25","26-30"}
+mid_bins  = {"31-35","51-55"}    
+high_bins = {"36-40","41-45","46-50"}
+
+def pick_color(b):
+    if b in low_bins:  return "#e0f3db"
+    if b in high_bins: return "#43a2ca"
+    return "#a8ddb5"
+
+speed_stats["bar_color"] = speed_stats["speed_bin"].astype(str).map(pick_color)
+
+bars = alt.Chart(speed_stats).mark_bar(
+    size=50   
+).encode(
+    x=alt.X(
+        "speed_bin:O",
+        title="Posted Speed Limit (mph)",
+        sort=labels,
+        axis=alt.Axis(labelAngle=0)
+    ),
+    
+    y=alt.Y(
+        "fatal_rate:Q",
+        title="Fatal Rate"
+    ),
+    
+    color=alt.Color("bar_color:N", scale=None, legend=None),
+    
+    tooltip=[
+        alt.Tooltip("speed_bin:N", title="Speed"),
+        alt.Tooltip("fatal_rate:Q", format=".4f"),
+        alt.Tooltip("total:Q", format=",")
+    ]
+)
+
+line = alt.Chart(speed_stats).mark_line(
+    color="#2c5c85",
+    point=True,
+    strokeWidth=1
+).encode(
+    x=alt.X("speed_bin:O", sort=labels),
+    y="fatal_rate:Q"
+)
+
+chart = (bars + line).properties(
+    title="Fatal Crash Rate by Posted Speed Limit",
+    width=800,
+    height=380
+).configure_view(
+    stroke="black",   
+    strokeWidth=1.5  
+)
+
+chart
+```
+
+16.Crash Density Map
+```{python}
+from matplotlib.colors import LinearSegmentedColormap
+
+colors = ["#e0f3db", "#a8ddb5", "#43a2ca"]
+cmap_gnbu = LinearSegmentedColormap.from_list("gnbu_custom", colors)
+
+m = crash.copy()
+m = m[(m["YEAR"] >= 2018) & (m["YEAR"] <= 2025)]
+m = m.dropna(subset=["LATITUDE", "LONGITUDE"])
+
+m = m[(m["LATITUDE"].between(41.6, 42.1)) &
+      (m["LONGITUDE"].between(-88.0, -87.3))]
+
+if len(m) > 200000:
+    m = m.sample(200000, random_state=0)
+
+plt.figure(figsize=(8, 8))
+
+hb = plt.hexbin(
+    m["LONGITUDE"],
+    m["LATITUDE"],
+    gridsize=120,  
+    mincnt=1,
+    cmap=cmap_gnbu
+)
+
+plt.colorbar(hb, label="Crash Density")
+plt.title("Crash Density Map")
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+plt.tight_layout()
+plt.show()
+```
+
+
+Clean speed data
+```{python}
+speed["GO-LIVE DATE"] = pd.to_datetime(speed["GO-LIVE DATE"], errors="coerce")
+speed["year"] = speed["GO-LIVE DATE"].dt.year
+
+speed["LATITUDE"] = pd.to_numeric(speed["LATITUDE"], errors="coerce")
+speed["LONGITUDE"] = pd.to_numeric(speed["LONGITUDE"], errors="coerce")
+speed = speed.dropna(subset=["LATITUDE", "LONGITUDE"])
+
+
+speed[["GO-LIVE DATE","year","LATITUDE","LONGITUDE"]].head()
+```
+
+
+We built three plots to compare the geographic distribution of crashes and traffic cameras across Chicago community areas.
+First, this heatmap shows total crash counts by community area. We set up a function to read the community boundaries data and convert it to a GeoDataFrame. It also has an optional plotting feature to visualize the boundaries. 
+```{python}
+def community_boundaries(plot=False):
+
+    boundaries_gdf = gpd.GeoDataFrame(
+        comm,
+        geometry=gpd.GeoSeries.from_wkt(comm["the_geom"]),
+        crs="EPSG:4326"
+    )
+
+    if plot:
+        fig, ax = plt.subplots(figsize=(8, 8))
+        boundaries_gdf.plot(ax=ax, edgecolor="black", linewidth=0.6, facecolor="none")
+        ax.set_axis_off()
+        plt.show()
+
+    return boundaries_gdf
+```
+
+```{python}
+boundaries_gdf = community_boundaries()
+
+crashes_clean = crash.dropna(subset=["LATITUDE", "LONGITUDE"]).copy()
+
+crashes_gdf = gpd.GeoDataFrame(
+    crashes_clean,
+    geometry=gpd.points_from_xy(crashes_clean["LONGITUDE"], crashes_clean["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+boundaries_small = boundaries_gdf[["COMMUNITY", "geometry"]].copy()
+joined = gpd.sjoin(crashes_gdf, boundaries_small, how="inner", predicate="within")
+
+crash_ct = (
+    joined.groupby("COMMUNITY")
+    .size()
+    .rename("crash_count")
+    .reset_index()
+)
+
+areas_plot = boundaries_gdf.merge(crash_ct, on="COMMUNITY", how="left")
+areas_plot["crash_count"] = areas_plot["crash_count"].fillna(0).astype(int)
+
+fig, ax = plt.subplots(figsize=(9, 9))
+areas_plot.plot(
+    column="crash_count",
+    cmap="GnBu",
+    ax=ax,
+    legend=True,
+    edgecolor="white",
+    linewidth=0.3
+)
+
+top3_geoms = areas_plot.sort_values("crash_count", ascending=False).head(3).copy()
+top3_geoms["pt"] = top3_geoms.geometry.representative_point()
+
+for _, r in top3_geoms.iterrows():
+    ax.text(
+        r["pt"].x, r["pt"].y,
+        r["COMMUNITY"],
+        fontsize=8,
+        ha="center",
+        va="center"
+    )
+
+ax.set_axis_off()
+ax.set_title("Traffic Crashes by Community Area (Count)")
+plt.show()
+```
+
+Second, we used the same way to map speed cameras. Speed cameras are spatially concentrated. Several neighborhoods exhibit substantially higher deployment intensity.
+```{python}
+comm_gdf = gpd.GeoDataFrame(
+    comm.copy(),
+    geometry=comm["the_geom"].apply(wkt.loads),
+    crs="EPSG:4326"
+)
+
+speed_gdf = gpd.GeoDataFrame(
+    speed.copy(),
+    geometry=gpd.points_from_xy(speed["LONGITUDE"], speed["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+speed_comm = gpd.sjoin(speed_gdf, comm_gdf, how="left", predicate="within")
+
+camera_counts = (
+    speed_comm.groupby("COMMUNITY")
+    .size()
+    .reset_index(name="num_cameras")
+)
+
+comm_gdf = comm_gdf.merge(camera_counts, on="COMMUNITY", how="left")
+comm_gdf["num_cameras"] = comm_gdf["num_cameras"].fillna(0).astype(int)
+```
+
+```{python}
+PALETTE_MAIN = ["#e0f3db", "#a8ddb5", "#43a2ca"]
+PALETTE_CONTRAST = ["#fee8c8", "#fdbb84", "#e34a33"]
+```
+
+```{python}
+def map_speed_cameras(comm_gdf, speed_gdf, palette, title):
+    comm_geojson = json.loads(comm_gdf.to_json())
+    points_df = speed_gdf[["LONGITUDE","LATITUDE"]].dropna().copy()
+
+    base = (
+        alt.Chart(alt.Data(values=comm_geojson["features"]))
+        .mark_geoshape(stroke="white", strokeWidth=0.5)
+        .encode(
+            color=alt.Color(
+                "properties.num_cameras:Q",
+                scale=alt.Scale(range=palette), 
+                legend=alt.Legend(title="Speed cameras")
+            ),
+            tooltip=[
+                alt.Tooltip("properties.COMMUNITY:N", title="Community"),
+                alt.Tooltip("properties.num_cameras:Q", title="Num cameras"),
+            ],
+        )
+        .project(type="mercator")
+        .properties(width=650, height=650, title=title)
+    )
+
+    pts = (
+        alt.Chart(points_df)
+        .mark_circle(size=12, opacity=0.5, color=palette[-1])
+        .encode(longitude="LONGITUDE:Q", latitude="LATITUDE:Q")
+    )
+
+    return base + pts
+
+map_speed_cameras(comm_gdf, speed_gdf, PALETTE_MAIN, "Speed cameras by community")
+```
+
+
+
+clean red light data
+```{python}
+redlight["GO LIVE DATE"] = pd.to_datetime(redlight["GO LIVE DATE"], errors="coerce")
+redlight["year"] = redlight["GO LIVE DATE"].dt.year
+
+redlight["LATITUDE"] = pd.to_numeric(redlight["LATITUDE"], errors="coerce")
+redlight["LONGITUDE"] = pd.to_numeric(redlight["LONGITUDE"], errors="coerce")
+redlight = redlight.dropna(subset=["LATITUDE", "LONGITUDE"]).copy()
+
+redlight[["GO LIVE DATE", "year", "LATITUDE", "LONGITUDE"]].head()
+```
+
+
+Third, we map red light cameras. 
+```{python}
+red_gdf = gpd.GeoDataFrame(
+    redlight.copy(),
+    geometry=gpd.points_from_xy(redlight["LONGITUDE"], redlight["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+red_comm = gpd.sjoin(red_gdf, comm_gdf, how="left", predicate="within")
+
+red_counts = (
+    red_comm.groupby("COMMUNITY")
+    .size()
+    .reset_index(name="num_red_cameras")
+)
+
+comm_red_gdf = comm_gdf.merge(red_counts, on="COMMUNITY", how="left")
+comm_red_gdf["num_red_cameras"] = comm_red_gdf["num_red_cameras"].fillna(0).astype(int)
+
+red_counts.sort_values("num_red_cameras", ascending=False).head(10)
+```
+
+```{python}
+def map_redlight_cameras(comm_gdf_in, red_gdf_in, palette, title):
+    comm_geojson = json.loads(comm_gdf_in.to_json())
+    points_df = red_gdf_in[["LONGITUDE","LATITUDE"]].dropna().copy()
+
+    base = (
+        alt.Chart(alt.Data(values=comm_geojson["features"]))
+        .mark_geoshape(stroke="white", strokeWidth=0.5)
+        .encode(
+            color=alt.Color(
+                "properties.num_red_cameras:Q",
+                scale=alt.Scale(range=palette),
+                legend=alt.Legend(title="Red light cameras")
+            ),
+            tooltip=[
+                alt.Tooltip("properties.COMMUNITY:N", title="Community"),
+                alt.Tooltip("properties.num_red_cameras:Q", title="Num red light cameras"),
+            ],
+        )
+        .project(type="mercator")
+        .properties(width=650, height=650, title=title)
+    )
+
+    pts = (
+        alt.Chart(points_df)
+        .mark_circle(size=12, opacity=0.5, color=palette[-1], stroke="white", strokeWidth=0.2)
+        .encode(longitude="LONGITUDE:Q", latitude="LATITUDE:Q")
+    )
+
+    return base + pts
+
+map_redlight_cameras(comm_red_gdf, red_gdf, PALETTE_CONTRAST, "Red light cameras by community")
+```
+
+
+Timing of speed camera deployment
+```{python}
+speed["year"] = speed["GO-LIVE DATE"].dt.year
+
+alt.Chart(speed).mark_bar().encode(
+    x=alt.X("year:O", title="Go Live Year"),
+    y=alt.Y("count():Q", title="Number of Cameras"),
+    tooltip=["year", "count()"]
+).properties(
+    width=700,
+    height=400,
+    title="Speed Camera Deployment by Year"
+)
+```
+
+Speed camera deployment in Chicago occurred in distinct waves. The first major rollout took place between 2013 and 2014, accounting for over half of all installations. After a period of relative stability, a second expansion began in 2023 and intensified in 2025. This staggered adoption pattern implies that treatment timing varies across locations, requiring an event-time framework for causal analysis.
+
+
+clean crash data
+```{python}
+import pandas as pd
+
+cols = pd.read_csv(CRASH_FP, nrows=0).columns.tolist()
+len(cols)
+crash.columns
+```
+```{python}
+crash["CRASH_DATE"] = pd.to_datetime(crash["CRASH_DATE"], errors="coerce")
+crash["CRASH_DATE"].min()
+crash["CRASH_DATE"].max()
+```
+
+Crash data began since 2013-03，but the camera that came to live in 2013 did not have an enough “pre period”.
+
+
+Event study-speed camera
+```{python}
+speed_2nd = speed[speed["GO-LIVE DATE"] >= "2023-01-01"].copy()
+len(speed_2nd)
+speed_2nd.columns
+```
+
+set a 200m buffer
+```{python}
+speed_2nd_gdf = gpd.GeoDataFrame(
+    speed_2nd,
+    geometry=gpd.points_from_xy(speed_2nd["LONGITUDE"],
+                                 speed_2nd["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+# meter coordinates
+speed_2nd_gdf = speed_2nd_gdf.to_crs(epsg=26971)
+
+# 200m buffer
+speed_2nd_gdf["geometry"] = speed_2nd_gdf.buffer(200)
+```
+
+crash data geodataframe
+```{python}
+crash_gdf = gpd.GeoDataFrame(
+    crash,
+    geometry=gpd.points_from_xy(crash["LONGITUDE"],
+                                 crash["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+crash_gdf = crash_gdf.to_crs(epsg=26971)
+```
+
+spatial join
+```{python}
+crash_camera = gpd.sjoin(
+    crash_gdf,
+    speed_2nd_gdf[["LOCATION ID", "GO-LIVE DATE", "geometry"]],
+    how="inner",
+    predicate="within"
+)
+```
+
+```{python}
+crash_camera["crash_month"] = crash_camera["CRASH_DATE"].dt.to_period("M")
+crash_camera["go_live_month"] = crash_camera["GO-LIVE DATE"].dt.to_period("M")
+
+crash_camera["event_time"] = (
+    crash_camera["crash_month"] -
+    crash_camera["go_live_month"]
+).apply(lambda x: x.n)
+
+crash_camera = crash_camera[
+    (crash_camera["event_time"] >= -24) &
+    (crash_camera["event_time"] <= 24)
+]
+
+panel = (
+    crash_camera
+    .groupby(["LOCATION ID", "event_time"])
+    .size()
+    .reset_index(name="crash_count")
+)
+
+event_avg = (
+    panel
+    .groupby("event_time")["crash_count"]
+    .mean()
+    .reset_index()
+)
+```
+
+```{python}
+chart = alt.Chart(event_avg).mark_line(point=True).encode(
+    x=alt.X(
+        "event_time:Q",
+        title="Months Since Installation"
+    ),
+    y=alt.Y(
+        "crash_count:Q",
+        title="Average Monthly Crashes per Speed Camera"
+    )
+).properties(
+    width=700,
+    height=400,
+    title="Event Study: Speed Cameras (Install Year ≥ 2023, ±24 Months)"
+)
+
+vline = alt.Chart(
+    pd.DataFrame({"x": [0]})
+).mark_rule(
+    color="red",
+    strokeDash=[6,4] 
+).encode(
+    x="x:Q"
+)
+
+chart + vline
+```
+
+We evaluate the impact of speed camera installation on traffic crashes using a staggered event study design. By spatially matching crash incidents within 200 meters of each camera and aligning time relative to installation month, we examine crash trends 24 months before and after deployment. The pre-treatment trend appears stable, suggesting no evidence of anticipatory decline. Following installation, average monthly crashes per camera decline by approximately 15–25%, indicating that speed cameras are associated with a meaningful reduction in local crash frequency.
+
+
+Clean red light data
+```{python}
+redlight["GO LIVE DATE"] = pd.to_datetime(redlight["GO LIVE DATE"], errors="coerce")
+
+redlight["GO LIVE DATE"].min(), redlight["GO LIVE DATE"].max()
+```
+
+Since there are FIRST/SECOND/THIRD APPROACH，the same INTERSECTION may appear repeatedly.
+```{python}
+redlight["INTERSECTION"].nunique(), len(redlight)
+```
+
+For the same interaction, take the earliest GO LIVE DATE.
+```{python}
+redlight_intersection = (
+    redlight.sort_values("GO LIVE DATE")
+      .groupby("INTERSECTION", as_index=False)
+      .agg({
+          "GO LIVE DATE": "min",
+          "LATITUDE": "first",
+          "LONGITUDE": "first",
+          "LOCATION": "first"
+      })
+)
+
+redlight_intersection.shape, redlight_intersection.head()
+
+redlight_intersection["install_year"] = redlight_intersection["GO LIVE DATE"].dt.year
+redlight_intersection["install_year"].value_counts().sort_index()
+```
+
+Timing of red light camera deployment
+```{python}
+df = redlight_intersection.copy()
+df["GO LIVE DATE"] = pd.to_datetime(df["GO LIVE DATE"], errors="coerce")
+df = df.dropna(subset=["GO LIVE DATE"])
+
+df["install_year"] = df["GO LIVE DATE"].dt.year
+
+year_counts = (
+    df.groupby("install_year")
+      .size()
+      .reset_index(name="num_intersections")
+)
+
+chart_year = alt.Chart(year_counts).mark_bar().encode(
+    x=alt.X("install_year:O", title="Go-Live Year"),
+    y=alt.Y("num_intersections:Q", title="Number of Intersections"),
+    tooltip=[
+        alt.Tooltip("install_year:O", title="Year"),
+        alt.Tooltip("num_intersections:Q", title="# Intersections")
+    ]
+).properties(
+    width=700,
+    height=400,
+    title="Red Light Camera Deployment by Year (Intersections)"
+)
+
+chart_year
+```
+
+```{python}
+redlight_gdf = gpd.GeoDataFrame(
+    redlight_intersection,
+    geometry=gpd.points_from_xy(redlight_intersection["LONGITUDE"], redlight_intersection["LATITUDE"]),
+    crs="EPSG:4326"
+)
+redlight_gdf.head()
+```
+
+Event study - red light camera
+```{python}
+cutoff_year = 2018
+
+redlight_intersection_sub = redlight_intersection[
+    redlight_intersection["GO LIVE DATE"].dt.year >= cutoff_year
+].copy()
+
+redlight_gdf_sub = gpd.GeoDataFrame(
+    redlight_intersection_sub,
+    geometry=gpd.points_from_xy(redlight_intersection_sub["LONGITUDE"],
+                                redlight_intersection_sub["LATITUDE"]),
+    crs="EPSG:4326"
+)
+
+redlight_proj_sub = redlight_gdf_sub.to_crs(epsg=26971)
+redlight_proj_sub["buffer_200m"] = redlight_proj_sub.geometry.buffer(200)
+buffer_gdf_sub = redlight_proj_sub.set_geometry("buffer_200m")
+```
+
+```{python}
+crash_camera = gpd.sjoin(
+    crash_gdf,
+    buffer_gdf_sub, 
+    predicate="within",
+    how="inner"
+).copy()
+
+crash_camera["CRASH_DATE"] = pd.to_datetime(crash_camera["CRASH_DATE"], errors="coerce")
+crash_camera["GO LIVE DATE"] = pd.to_datetime(crash_camera["GO LIVE DATE"], errors="coerce")
+crash_camera = crash_camera.dropna(subset=["CRASH_DATE","GO LIVE DATE","INTERSECTION","CRASH_RECORD_ID"])
+
+crash_camera["crash_month"] = crash_camera["CRASH_DATE"].dt.to_period("M")
+crash_camera["go_live_month"] = crash_camera["GO LIVE DATE"].dt.to_period("M")
+crash_camera["event_time"] = (crash_camera["crash_month"] - crash_camera["go_live_month"]).apply(lambda x: x.n)
+
+event_min, event_max = -24, 24
+crash_camera = crash_camera[(crash_camera["event_time"] >= event_min) & (crash_camera["event_time"] <= event_max)].copy()
+
+# intersection × event_time 
+panel = (
+    crash_camera.groupby(["INTERSECTION","event_time"])["CRASH_RECORD_ID"]
+    .nunique()
+    .reset_index(name="crash_count")
+)
+
+
+intersections = panel["INTERSECTION"].unique()
+event_grid = np.arange(event_min, event_max + 1)
+full_index = pd.MultiIndex.from_product([intersections, event_grid], names=["INTERSECTION","event_time"])
+
+panel_full = (
+    panel.set_index(["INTERSECTION","event_time"])[["crash_count"]]
+    .reindex(full_index)
+    .fillna({"crash_count": 0})
+    .reset_index()
+)
+
+event_avg = (
+    panel_full.groupby("event_time")["crash_count"]
+    .mean()
+    .reset_index()
+)
+```
+
+```{python}
+import altair as alt
+import pandas as pd
+
+chart = alt.Chart(event_avg).mark_line(point=True).encode(
+    x=alt.X("event_time:Q", title="Months Since Installation"),
+    y=alt.Y("crash_count:Q",
+            title="Avg Monthly Crashes per Intersection (within 200m)",
+            scale=alt.Scale(zero=False)),
+    tooltip=[
+        alt.Tooltip("event_time:Q", title="Event time (months)"),
+        alt.Tooltip("crash_count:Q", title="Avg crashes", format=".2f")
+    ]
+).properties(
+    width=700,
+    height=400,
+    title=f"Event Study: Red Light Cameras (Install Year ≥ {cutoff_year}, ±24 Months)"
+)
+
+vline = alt.Chart(pd.DataFrame({"x":[0]})).mark_rule(strokeDash=[6,4], color="red").encode(x="x:Q")
+chart + vline
+
+```
+
+```{python}
+OUT_PATH = DERIVED_DIR / "crashes_by_community_year_hour_type.csv"
+
+def load_crashes(crash):
+    usecols = ["CRASH_DATE", "LATITUDE", "LONGITUDE", "FIRST_CRASH_TYPE", "MOST_SEVERE_INJURY"]
+    df = crash[usecols].copy()
+
+    df["CRASH_DATE"] = pd.to_datetime(
+        df["CRASH_DATE"], errors="coerce", infer_datetime_format=True
+    )
+
+    df = df.dropna(subset=["CRASH_DATE", "LATITUDE", "LONGITUDE"]).copy()
+    df["LATITUDE"] = pd.to_numeric(df["LATITUDE"], errors="coerce")
+    df["LONGITUDE"] = pd.to_numeric(df["LONGITUDE"], errors="coerce")
+    df = df.dropna(subset=["LATITUDE", "LONGITUDE"]).copy()
+
+    df["FIRST_CRASH_TYPE"] = (
+        df["FIRST_CRASH_TYPE"].astype(str).str.strip().fillna("UNKNOWN")
+    )
+
+    df["MOST_SEVERE_INJURY"] = df["MOST_SEVERE_INJURY"].astype(str).str.strip()
+    df["fatal_flag"] = (df["MOST_SEVERE_INJURY"] == "FATAL").astype(int)
+
+    df["year"] = df["CRASH_DATE"].dt.year
+    df["hour"] = df["CRASH_DATE"].dt.hour
+    return df
+
+
+def main():
+    DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+
+    areas = community_boundaries()
+    areas = areas[["COMMUNITY", "geometry"]]
+
+    cr = load_crashes(crash)
+
+    cr_gdf = gpd.GeoDataFrame(
+        cr,
+        geometry=gpd.points_from_xy(cr["LONGITUDE"], cr["LATITUDE"]),
+        crs="EPSG:4326",
+    )
+
+    joined = gpd.sjoin(cr_gdf, areas, how="inner", predicate="within")
+
+    agg = (
+    joined.groupby(["COMMUNITY", "year", "hour", "FIRST_CRASH_TYPE"])
+    .agg(
+        crash_count=("fatal_flag", "size"),
+        fatal_crashes=("fatal_flag", "sum")
+    )
+    .reset_index()
+    )
+
+    agg.to_csv(OUT_PATH, index=False)
+
+if __name__ == "__main__":
+    main()
+```

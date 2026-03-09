@@ -1,38 +1,98 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/YlfKWlZ5)
-# Fire Perimeter Analysis
+# Final Project — Chicago Traffic Crashes & Enforcement Cameras (Group 23)
 
-This project processes and visualizes historical fire perimeter data and Canadian CPI data.
+**Dashboard (Streamlit Community Cloud):** https://final-project-chicago-crashes-g9srdmczqbxunyfhgnttyg.streamlit.app/
 
-## Setup
+> **Note (Streamlit “wake up”):** Streamlit Community Cloud apps can go to sleep after inactivity.  
+> If you see a “waking up” / cold-start message, simply open the link and wait ~10–60 seconds, then refresh once.
 
+## Team
+- Luchen Gao (GitHub: `LuchenGao`)
+- Sirui Mao (GitHub: `sirui0820`)
+- Xinyi Liu （Github: `xinyiliu1`）
+
+## Research questions
+1. **Are red light and speed cameras placed in higher-risk (higher-crash) areas?**
+2. **Do cameras help reduce crash counts and/or crash severity?**
+
+## Repository structure 
+```
+.
+├── README.md
+├── requirements.txt
+├── final_project.qmd                # writeup source (Quarto)
+├── final_project.html               # knitted writeup (HTML)
+├── final_project.pdf                # knitted writeup (PDF)
+├── code/
+│   ├── preprocessing.py             # builds derived datasets
+│   └── ...                          # analysis / plotting scripts
+├── data/
+│   ├── raw-data/                    # original downloads (unmodified)
+│   └── derived-data/                # outputs created by preprocessing.py
+└── streamlit-app/
+    ├── app.py                       # Streamlit entrypoint
+    └── community_boundaries.py      # helper to load Chicago community areas
+```
+
+## Data sources (Chicago Data Portal)
+All datasets are from the City of Chicago’s open data portal:
+- **Traffic Crashes – Crashes** (large CSV; see download instructions below)
+- **Boundaries – Community Areas**
+- **Speed Camera Locations**
+- **Red Light Camera Locations**
+
+## Large file note (Traffic Crashes – Crashes)
+GitHub has a 100MB file limit, so we **do not** store the full crash CSV in the repo.
+
+**Download link (Google Drive):** https://drive.google.com/file/d/1VP1dcng906Av8EOnhA0mU3BvFT9uHPk8/view?usp=sharing
+
+1. Download the crash CSV from the Drive link above (you may need access/permission).
+2. Save it to this exact path (relative to repo root):
+   ```
+   data/raw-data/Traffic_Crashes_-_Crashes_20260224.csv
+   ```
+3. Do **not** rename the file (the code expects this filename).
+
+All other (smaller) raw datasets are stored in `data/raw-data/`.
+
+## Reproducibility: run locally
+### 1) Install requirements
+From the repo root:
 ```bash
-conda env create -f environment.yml
-conda activate fire_analysis
+python -m venv .venv
+source .venv/bin/activate   # macOS/Linux
+# .venv\Scripts\activate  # Windows (PowerShell)
+pip install -r requirements.txt
 ```
 
-## Project Structure
+### 2) Put raw data in the right place
+Ensure:
+- `data/raw-data/Boundaries_-_Community_Areas_20260122.csv`
+- `data/raw-data/Speed_Camera_Locations_20260222.csv`
+- `data/raw-data/Red_Light_Camera_Locations_20260122.csv`
+- `data/raw-data/Traffic_Crashes_-_Crashes_20260224.csv` (download via Drive)
 
+### 3) Build derived data
+From repo root:
+```bash
+python code/preprocessing.py
 ```
-data/
-  raw-data/           # Raw data files
-    fire.csv          # Historical fire perimeter data
-    canadian_cpi.csv  # Canadian Consumer Price Index data
-  derived-data/       # Filtered data and output plots
-    fire_filtered.gpkg  # Fire data filtered to post-2015
-    cpi_filtered.csv    # CPI data filtered to 2020 onwards
-code/
-  preprocessing.py    # Filters fire and CPI data
-  plot_fires.py       # Plots fire perimeters
+This should create:
+```
+data/derived-data/crashes_by_community_year_hour_type.csv
 ```
 
-## Usage
+### 4) Run the Streamlit app
+From repo root:
+```bash
+streamlit run streamlit-app/app.py
+```
 
-1. Run preprocessing to filter data:
-   ```bash
-   python code/preprocessing.py
-   ```
+## Deployment
+The dashboard is deployed on Streamlit Community Cloud using:
+- **Branch:** `main`
+- **Main file path:** `streamlit-app/app.py`
 
-2. Generate the fire perimeter plot:
-   ```bash
-   python code/plot_fires.py
-   ```
+
+## Git / branches
+During development we used multiple branches (per rubric) for feature work (e.g., dashboard deployment and camera overlays).  
+The final submission lives on **`main`**.
