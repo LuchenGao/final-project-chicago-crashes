@@ -75,8 +75,9 @@ months_chart = alt.Chart(months_per_year).mark_bar(color="#9ecae1").encode(
     height=400
 )
 
-months_chart
+months_chart.save("figures/months_chart.png", scale_factor=2)
 ```
+![](figures/months_chart.png)
 
 2.Annual Number of Crashed
 ```{python}
@@ -106,8 +107,9 @@ annual_chart = alt.Chart(annual_crashes).mark_bar(color="#43a2ca").encode(
     height=400
 )
 
-annual_chart
+annual_chart.save("figures/annual_chart.png", scale_factor=2)
 ```
+![](figures/annual_chart.png)
 
 3.Average Crashed By Month (2018-2025)
 ```{python}
@@ -147,8 +149,9 @@ season_chart = alt.Chart(monthly_avg).mark_line(point=True, color="#43a2ca").enc
     height=400
 )
 
-season_chart
+season_chart.save("figures/season_chart.png", scale_factor=2)
 ```
+![](figures/season_chart.png)
 
 4.Average Crashes by Hour of Day (2018-2025)
 ```{python}
@@ -195,8 +198,9 @@ hour_chart = (bars + line).properties(
     height=400
 )
 
-hour_chart
+hour_chart.save("figures/hour_chart.png", scale_factor=2)
 ```
+![](figures/hour_chart.png)
 
 5.Crashes Heatmap: Hour × Day of Week (Average, 2018–2025)
 ```{python}
@@ -256,8 +260,9 @@ heat_chart = alt.Chart(heat_avg).mark_rect().encode(
     height=350
 )
 
-heat_chart
+heat_chart.save("figures/heat_chart.png", scale_factor=2)
 ```
+![](figures/heat_chart.png)
 
 6.Crash Severity Distribution
 ```{python}
@@ -326,8 +331,10 @@ text = severity_chart.mark_text(
     text=alt.Text("share:Q", format=".1f")
 )
 
-severity_chart + text
+severity_chart_labeled = severity_chart + text
+severity_chart_labeled.save("figures/severity_chart.png", scale_factor=2)
 ```
+![](figures/severity_chart.png)
 
 7.Top Roadway Surface Conditions in Crashes
 ```{python}
@@ -351,8 +358,10 @@ base = alt.Chart(surf).mark_bar(color="#43a2ca").encode(
     x=alt.X("n:Q", title="Crashes"),
     tooltip=["surface", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
 ).properties(title="Top Roadway Surface Conditions in Crashes", width=750, height=360)
-base 
+
+base.save("figures/surface_chart.png", scale_factor=2)
 ```
+![](figures/surface_chart.png)
 
 8.Lightning Conditions in Crashes
 ```{python}
@@ -377,8 +386,9 @@ base = alt.Chart(light).mark_bar(color="#a8ddb5").encode(
     tooltip=["lighting", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
 ).properties(title="Lighting", width=750, height=320)
 
-base 
+base.save("figures/lighting_chart.png", scale_factor=2)
 ```
+![](figures/lighting_chart.png)
 
 9.Primary contributory causes
 ```{python}
@@ -402,10 +412,11 @@ base = alt.Chart(cause).mark_bar(color="#43a2ca").encode(
     x=alt.X("n:Q", title="Crashes"),
     tooltip=["cause", alt.Tooltip("n:Q", format=",.0f"), alt.Tooltip("share_pct:Q", format=".1f")]
 ).properties(title="Primary Cause", width=750, height=420)
-base
+base.save("figures/cause_chart.png", scale_factor=2)
 ```
+![](figures/cause_chart.png)    
 
-10.eatmap of total injuries（Year × Month）
+10.Heatmap of total injuries（Year × Month）
 ```{python}
 inj = (
     crash.query("YEAR >= 2018 and YEAR <= 2025")
@@ -429,8 +440,9 @@ inj_heat = alt.Chart(inj).mark_rect().encode(
     tooltip=["YEAR:O","MONTH:O", alt.Tooltip("total_injuries:Q", format=",.0f")]
 ).properties(title="Injuries Heatmap", width=750, height=320)
 
-inj_heat
+inj_heat.save("figures/inj_heatmap.png", scale_factor=2)
 ```
+![](figures/inj_heatmap.png)
 
 11.Total injuries over time
 ```{python}
@@ -453,8 +465,9 @@ inj_line = alt.Chart(inj_month).mark_line(color="#43a2ca").encode(
              alt.Tooltip("total_injuries:Q", format=",.0f")]
 ).properties(title="Injuries Over Time", width=750, height=320)
 
-inj_line
+inj_line.save("figures/inj_line.png", scale_factor=2)
 ```
+![](figures/inj_line.png)
 
 12.Fatal rate by first crash type
 ```{python}
@@ -496,8 +509,9 @@ fatal_bar = alt.Chart(fatal_type).mark_bar().encode(
              alt.Tooltip("fatal_rate:Q", format=".4f")]
 ).properties(title="Fatal Rate by Crash Type", width=750, height=320)
 
-fatal_bar
+fatal_bar.save("figures/fatal_type.png", scale_factor=2)
 ```
+![](figures/fatal_type.png)
 
 13.Annual fatal crashes
 ```{python}
@@ -529,8 +543,9 @@ fatal_count_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca")
     height=360
 )
 
-fatal_count_chart
+fatal_count_chart.save("figures/fatal_count.png", scale_factor=2)
 ```
+![](figures/fatal_count.png)
 
 14.Annual fatal share
 ```{python}
@@ -546,8 +561,9 @@ fatal_share_chart = alt.Chart(year_fatal).mark_line(point=True, color="#43a2ca")
     height=360
 )
 
-fatal_share_chart
+fatal_share_chart.save("figures/fatal_share.png", scale_factor=2)
 ```
+![](figures/fatal_share.png)
 
 15.Fatal Crash Rate by Posted Speed Limit
 ```{python}
@@ -626,8 +642,9 @@ chart = (bars + line).properties(
     strokeWidth=1.5  
 )
 
-chart
+chart.save("figures/fatal_speed.png", scale_factor=2)
 ```
+![](figures/fatal_speed.png)
 
 16.Crash Density Map
 ```{python}
@@ -673,7 +690,6 @@ speed["year"] = speed["GO-LIVE DATE"].dt.year
 speed["LATITUDE"] = pd.to_numeric(speed["LATITUDE"], errors="coerce")
 speed["LONGITUDE"] = pd.to_numeric(speed["LONGITUDE"], errors="coerce")
 speed = speed.dropna(subset=["LATITUDE", "LONGITUDE"])
-
 
 speed[["GO-LIVE DATE","year","LATITUDE","LONGITUDE"]].head()
 ```
@@ -812,10 +828,10 @@ def map_speed_cameras(comm_gdf, speed_gdf, palette, title):
 
     return base + pts
 
-map_speed_cameras(comm_gdf, speed_gdf, PALETTE_MAIN, "Speed cameras by community")
+speed_cameras =map_speed_cameras(comm_gdf, speed_gdf, PALETTE_MAIN, "Speed cameras by community")
+speed_cameras.save("figures/speed_cameras.png", scale_factor=2)
 ```
-
-
+![](figures/speed_cameras.png)
 
 clean red light data
 ```{python}
@@ -883,15 +899,16 @@ def map_redlight_cameras(comm_gdf_in, red_gdf_in, palette, title):
 
     return base + pts
 
-map_redlight_cameras(comm_red_gdf, red_gdf, PALETTE_CONTRAST, "Red light cameras by community")
+redlight_cameras = map_redlight_cameras(comm_red_gdf, red_gdf, PALETTE_CONTRAST, "Red light cameras by community")
+redlight_cameras.save("figures/redlight_cameras.png", scale_factor=2)
 ```
-
+![](figures/redlight_cameras.png)
 
 Timing of speed camera deployment
 ```{python}
 speed["year"] = speed["GO-LIVE DATE"].dt.year
 
-alt.Chart(speed).mark_bar().encode(
+speed_chart = alt.Chart(speed).mark_bar().encode(
     x=alt.X("year:O", title="Go Live Year"),
     y=alt.Y("count():Q", title="Number of Cameras"),
     tooltip=["year", "count()"]
@@ -900,7 +917,10 @@ alt.Chart(speed).mark_bar().encode(
     height=400,
     title="Speed Camera Deployment by Year"
 )
+
+speed_chart.save("figures/speed_deployment.png", scale_factor=2)
 ```
+![](figures/speed_deployment.png)
 
 Speed camera deployment in Chicago occurred in distinct waves. The first major rollout took place between 2013 and 2014, accounting for over half of all installations. After a period of relative stability, a second expansion began in 2023 and intensified in 2025. This staggered adoption pattern implies that treatment timing varies across locations, requiring an event-time framework for causal analysis.
 
@@ -920,7 +940,6 @@ crash["CRASH_DATE"].max()
 ```
 
 Crash data began since 2013-03，but the camera that came to live in 2013 did not have an enough “pre period”.
-
 
 Event study-speed camera
 ```{python}
@@ -1021,8 +1040,10 @@ vline = alt.Chart(
     x="x:Q"
 )
 
-chart + vline
+speed_event_study = chart + vline
+speed_event_study.save("figures/speed_event_study.png", scale_factor=2)
 ```
+![](figures/speed_event_study.png)
 
 We evaluate the impact of speed camera installation on traffic crashes using a staggered event study design. By spatially matching crash incidents within 200 meters of each camera and aligning time relative to installation month, we examine crash trends 24 months before and after deployment. The pre-treatment trend appears stable, suggesting no evidence of anticipatory decline. Following installation, average monthly crashes per camera decline by approximately 15–25%, indicating that speed cameras are associated with a meaningful reduction in local crash frequency.
 
@@ -1085,8 +1106,9 @@ chart_year = alt.Chart(year_counts).mark_bar().encode(
     title="Red Light Camera Deployment by Year (Intersections)"
 )
 
-chart_year
+chart_year.save("figures/redlight_deployment.png", scale_factor=2)
 ```
+![](figures/redlight_deployment.png)
 
 ```{python}
 redlight_gdf = gpd.GeoDataFrame(
@@ -1182,9 +1204,10 @@ chart = alt.Chart(event_avg).mark_line(point=True).encode(
 )
 
 vline = alt.Chart(pd.DataFrame({"x":[0]})).mark_rule(strokeDash=[6,4], color="red").encode(x="x:Q")
-chart + vline
-
+redlight_event_study = chart + vline
+redlight_event_study.save("figures/redlight_event_study.png", scale_factor=2)
 ```
+![](figures/redlight_event_study.png)
 
 ```{python}
 OUT_PATH = DERIVED_DIR / "crashes_by_community_year_hour_type.csv"
